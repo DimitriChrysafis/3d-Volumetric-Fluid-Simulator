@@ -10,6 +10,11 @@ struct Cell {
     mass: i32, 
 }
 
+struct PosVel {
+    position: vec3f,
+    v: vec3f,
+}
+
 override fixed_point_multiplier: f32; 
 override dt: f32; 
 
@@ -17,6 +22,7 @@ override dt: f32;
 @group(0) @binding(1) var<storage, read> cells: array<Cell>;
 @group(0) @binding(2) var<uniform> real_box_size: vec3f;
 @group(0) @binding(3) var<uniform> init_box_size: vec3f;
+@group(0) @binding(4) var<storage, read_write> posvel: array<PosVel>;
 
 fn decodeFixedPoint(fixed_point: i32) -> f32 {
 	return f32(fixed_point) / fixed_point_multiplier;
@@ -88,5 +94,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         if (x_n.y > wall_max.y) { particles[id.x].v.y += wall_stiffness * (wall_max.y - x_n.y); }
         if (x_n.z < wall_min.z) { particles[id.x].v.z += wall_stiffness * (wall_min.z - x_n.z); }
         if (x_n.z > wall_max.z) { particles[id.x].v.z += wall_stiffness * (wall_max.z - x_n.z); }
+
+        // Write compact position/velocity for rendering
+        posvel[id.x].position = particles[id.x].position;
+        posvel[id.x].v = particles[id.x].v;
     }
 }

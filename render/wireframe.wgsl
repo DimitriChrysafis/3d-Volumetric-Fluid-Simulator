@@ -32,12 +32,17 @@ struct PosVel {
 
 @group(0) @binding(0) var<storage> particles: array<PosVel>;
 @group(0) @binding(1) var<uniform> uniforms: RenderUniforms;
+@group(0) @binding(2) var<storage, read> visibility: array<u32>;
 
 @vertex
 fn vs(    
     @builtin(vertex_index) vertex_index: u32, 
     @builtin(instance_index) instance_index: u32
 ) -> VertexOutput {
+    // Early cull invisible instances (set position off-screen)
+    if (visibility[instance_index] == 0u) {
+        return VertexOutput(vec4f(-2.0, -2.0, 0.0, 1.0), vec2f(0.0), vec3f(0.0), 0.0);
+    }
     // Create wireframe circle vertices (48 points for a denser, more solid circle)
     let num_segments = 48u;
     let segment_index = vertex_index % num_segments;

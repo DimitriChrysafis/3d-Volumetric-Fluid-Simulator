@@ -2,13 +2,15 @@ export class FluidRenderer {
     constructor(
         device, canvas, presentationFormat,
         radius, fov, posvelBuffer, 
-        renderUniformBuffer
+        renderUniformBuffer,
+        visibilityBuffer
     ) {
         this.device = device
         this.canvas = canvas
         this.presentationFormat = presentationFormat
         this.posvelBuffer = posvelBuffer
         this.renderUniformBuffer = renderUniformBuffer
+        this.visibilityBuffer = visibilityBuffer
         this.wireframeEnabled = false
         this.boundingBoxEnabled = true
         this.cachedColorView = null
@@ -99,6 +101,7 @@ export class FluidRenderer {
             entries: [
                 { binding: 0, resource: { buffer: this.posvelBuffer }},
                 { binding: 1, resource: { buffer: this.renderUniformBuffer }},
+                { binding: 2, resource: { buffer: this.visibilityBuffer }},
             ]
         })
 
@@ -108,6 +111,7 @@ export class FluidRenderer {
             entries: [
                 { binding: 0, resource: { buffer: this.posvelBuffer }},
                 { binding: 1, resource: { buffer: this.renderUniformBuffer }},
+                { binding: 2, resource: { buffer: this.visibilityBuffer }},
             ]
         })
 
@@ -142,6 +146,30 @@ export class FluidRenderer {
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
         });
         this.depthTestTextureView = depthTestTexture.createView();
+    }
+
+    setVisibilityBuffer(buffer) {
+        this.visibilityBuffer = buffer;
+        // Recreate bind groups with new buffer
+        this.sphereBindGroup = this.device.createBindGroup({
+            label: 'sphere bind group', 
+            layout: this.spherePipeline.getBindGroupLayout(0),  
+            entries: [
+                { binding: 0, resource: { buffer: this.posvelBuffer }},
+                { binding: 1, resource: { buffer: this.renderUniformBuffer }},
+                { binding: 2, resource: { buffer: this.visibilityBuffer }},
+            ]
+        })
+
+        this.wireframeBindGroup = this.device.createBindGroup({
+            label: 'wireframe bind group', 
+            layout: this.wireframePipeline.getBindGroupLayout(0),  
+            entries: [
+                { binding: 0, resource: { buffer: this.posvelBuffer }},
+                { binding: 1, resource: { buffer: this.renderUniformBuffer }},
+                { binding: 2, resource: { buffer: this.visibilityBuffer }},
+            ]
+        })
     }
 
     execute(context, commandEncoder, numParticles) {

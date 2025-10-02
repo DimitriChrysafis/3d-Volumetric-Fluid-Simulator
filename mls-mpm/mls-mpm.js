@@ -27,14 +27,12 @@ export class MLSMPMSimulator {
         const p2g_2 = await fetch('mls-mpm/p2g_2.wgsl').then(r => r.text());
         const updateGrid = await fetch('mls-mpm/updateGrid.wgsl').then(r => r.text());
         const g2p = await fetch('mls-mpm/g2p.wgsl').then(r => r.text());
-        const copyPosition = await fetch('mls-mpm/copyPosition.wgsl').then(r => r.text());
 
         const clearGridModule = this.device.createShaderModule({ code: clearGrid });
         const p2g1Module = this.device.createShaderModule({ code: p2g_1 });
         const p2g2Module = this.device.createShaderModule({ code: p2g_2 });
         const updateGridModule = this.device.createShaderModule({ code: updateGrid });
         const g2pModule = this.device.createShaderModule({ code: g2p });
-        const copyPositionModule = this.device.createShaderModule({ code: copyPosition });
 
         const constants = {
             stiffness: 3., 
@@ -93,11 +91,7 @@ export class MLSMPMSimulator {
                 }
             }
         });
-        this.copyPositionPipeline = this.device.createComputePipeline({
-            label: "copy position pipeline", 
-            layout: 'auto', 
-            compute: { module: copyPositionModule }
-        });
+        // copyPosition eliminated; g2p now writes to posvel directly
 
         const maxGridCount = this.max_x_grids * this.max_y_grids * this.max_z_grids;
         const realBoxSizeValues = new ArrayBuffer(12);
@@ -156,14 +150,8 @@ export class MLSMPMSimulator {
                 { binding: 0, resource: { buffer: this.particleBuffer }},
                 { binding: 1, resource: { buffer: cellBuffer }},
                 { binding: 2, resource: { buffer: this.realBoxSizeBuffer }},
-                { binding: 3, resource: { buffer: this.initBoxSizeBuffer }}
-            ]
-        })
-        this.copyPositionBindGroup = this.device.createBindGroup({
-            layout: this.copyPositionPipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: { buffer: this.particleBuffer }}, 
-                { binding: 1, resource: { buffer: this.posvelBuffer }}
+                { binding: 3, resource: { buffer: this.initBoxSizeBuffer }},
+                { binding: 4, resource: { buffer: this.posvelBuffer }},
             ]
         })
     }
@@ -240,9 +228,6 @@ export class MLSMPMSimulator {
             computePass.setBindGroup(0, this.g2pBindGroup)
             computePass.setPipeline(this.g2pPipeline)
             computePass.dispatchWorkgroups(Math.ceil(this.numParticles / 64)) 
-            computePass.setBindGroup(0, this.copyPositionBindGroup)
-            computePass.setPipeline(this.copyPositionPipeline)
-            computePass.dispatchWorkgroups(Math.ceil(this.numParticles / 64))             
         }
         computePass.end()
     }

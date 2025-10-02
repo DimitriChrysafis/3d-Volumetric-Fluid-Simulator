@@ -2,6 +2,8 @@ import { Camera } from './camera.js'
 import { MLSMPMSimulator, mlsmpmParticleStructSize } from './mls-mpm/mls-mpm.js'
 import { FluidRenderer } from './render/fluidRender.js'
 import { renderUniformsValues, renderUniformsViews, numParticlesMax } from './common.js'
+import { FrustumCuller } from './optimization/frustumCulling.js'
+import { mat4 } from 'https://cdn.skypack.dev/wgpu-matrix'
 
 const BOX_WIDTH = 100;
 const BOX_HEIGHT = 100;
@@ -106,8 +108,16 @@ async function main() {
 
     const simulator = new MLSMPMSimulator(particleBuffer, posvelBuffer, diameter, device, BOX_WIDTH, BOX_HEIGHT, BOX_DEPTH);
     await simulator.initialize();
-    
-    const renderer = new FluidRenderer(device, canvas, presentationFormat, radius, fov, posvelBuffer, renderUniformBuffer);
+
+    // Setup frustum culling and default visibility (all visible)
+    const culler = new FrustumCuller(device);
+    await culler.initialize(numParticlesMax);
+    const ones = new Uint32Array(numParticlesMax);
+    ones.fill(1);
+    device.queue.writeBuffer(culler.visibilityBuffer, 0, ones);
+    const cullBindGroup = culler.createBindGroup(posvelBuffer, renderUniformBuffer);
+
+    const renderer = new FluidRenderer(device, canvas, presentationFormat, radius, fov, posvelBuffer, renderUniformBuffer, culler.visibilityBuffer);
     await renderer.initialize();
     // Expose to resize handler
     window.__renderer = renderer;
@@ -118,7 +128,7 @@ async function main() {
     let waveEnabled = true;
     let waveTime = 0;
     let waveAmplitude = 0.40;
-    let boxDepth = 100;
+    // let boxDepth = 100; // unused
     
     let wireframeEnabled = true;
     let boundingBoxEnabled = true;
@@ -180,7 +190,7 @@ async function main() {
         renderer.setBoundingBoxMode(boundingBoxEnabled);
       }
     });
-    const renderState = { resolutionScale: 1.0 };
+    const renderState = { resolutionScale: 1.0, cullingEnabled: true };
     renderingFolder.add(renderState, 'resolutionScale', 0.5, 2.0, 0.1).name('Resolution Scale').onChange((s) => {
       const w = Math.max(1, Math.floor(devicePixelRatio * canvas.clientWidth * s));
       const h = Math.max(1, Math.floor(devicePixelRatio * canvas.clientHeight * s));
@@ -191,6 +201,7 @@ async function main() {
       }
       renderUniformsViews.texel_size.set([1.0 / canvas.width, 1.0 / canvas.height]);
     });
+    renderingFolder.add(renderState, 'cullingEnabled').name('Enable Frustum Culling');
     
     renderingFolder.open();
     
@@ -234,22 +245,8 @@ async function main() {
 
     let boxWidthRatio = 1.0;
     let prevBoxSize = [...realBoxSize];
-    let uniformsNeedUpdate = true;
 
     let lastTime = performance.now();
-    // Simple CPU-side benchmarking of command submission times
-    let benchEl = document.createElement('div');
-    benchEl.style.position = 'fixed';
-    benchEl.style.right = '8px';
-    benchEl.style.top = '8px';
-    benchEl.style.zIndex = '101';
-    benchEl.style.font = '12px monospace';
-    benchEl.style.background = 'rgba(0,0,0,0.4)';
-    benchEl.style.color = '#fff';
-    benchEl.style.padding = '6px 8px';
-    benchEl.style.borderRadius = '4px';
-    document.body.appendChild(benchEl);
-    let avgCompute = 0, avgRender = 0, avgFrame = 0, samples = 0;
     async function frame(currentTime) {
       stats.begin();
 
@@ -268,7 +265,6 @@ async function main() {
 
           realBoxSize[2] = initBoxSize[2] * boxWidthRatio;
           simulator.changeBoxSize(realBoxSize);
-          uniformsNeedUpdate = true;
         }
       }
 
@@ -280,29 +276,27 @@ async function main() {
       if (realBoxSize[0] !== prevBoxSize[0] || realBoxSize[1] !== prevBoxSize[1] || realBoxSize[2] !== prevBoxSize[2]) {
         prevBoxSize = [...realBoxSize];
       }
-      uniformsNeedUpdate = false;
 
       const commandEncoder = device.createCommandEncoder();
 
       if (!isPaused) {
-        const t0 = performance.now();
         simulator.execute(commandEncoder);
-        const t1 = performance.now();
-        avgCompute = (avgCompute * samples + (t1 - t0)) / (samples + 1);
       }
-      const r0 = performance.now();
+      // Frustum culling before rendering (optional)
+      {
+        const P = renderUniformsViews.projection_matrix;
+        const V = renderUniformsViews.view_matrix;
+        const VP = mat4.multiply(P, V);
+        if (renderState.cullingEnabled) {
+          culler.execute(commandEncoder, cullBindGroup, simulator.numParticles, VP);
+        } else {
+          // ensure first value visible (buffer is already ones initially)
+          device.queue.writeBuffer(culler.visibilityBuffer, 0, new Uint32Array([1]));
+        }
+      }
       renderer.execute(context, commandEncoder, simulator.numParticles);
-      const r1 = performance.now();
-      avgRender = (avgRender * samples + (r1 - r0)) / (samples + 1);
 
-      const f0 = performance.now();
       device.queue.submit([commandEncoder.finish()]);
-      const f1 = performance.now();
-      avgFrame = (avgFrame * samples + (f1 - f0)) / (samples + 1);
-      samples++;
-      if ((samples % 30) === 0) {
-        benchEl.textContent = `CPU submit avg ms — compute: ${avgCompute.toFixed(2)} render: ${avgRender.toFixed(2)} submit: ${avgFrame.toFixed(2)}`;
-      }
       
       stats.end();
       requestAnimationFrame(frame);
