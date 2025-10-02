@@ -15,7 +15,7 @@ async function init() {
     throw new Error();
   }
 
-  const adapter = await navigator.gpu.requestAdapter();
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) {
     alert("Adapter is not available.");
     throw new Error();
@@ -34,11 +34,30 @@ async function init() {
   }
 
   let devicePixelRatio = 3.0;
-  canvas.width = devicePixelRatio * canvas.clientWidth;
-  canvas.height = devicePixelRatio * canvas.clientHeight;
+  let devicePixelRatio = Math.min(2, (window.devicePixelRatio || 1));
+  const resizeCanvas = () => {
+    // Recompute DPR on resize to adapt to user changes
+    devicePixelRatio = Math.min(2, (window.devicePixelRatio || 1));
+    canvas.width = Math.max(1, Math.floor(devicePixelRatio * canvas.clientWidth));
+    canvas.height = Math.max(1, Math.floor(devicePixelRatio * canvas.clientHeight));
+  };
+  resizeCanvas();
 
   const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format: presentationFormat });
+  context.configure({ device, format: presentationFormat, alphaMode: 'opaque' });
+
+  // Keep canvas/resolution in sync
+  window.addEventListener('resize', () => {
+    const prevW = canvas.width, prevH = canvas.height;
+    resizeCanvas();
+    if (canvas.width !== prevW || canvas.height !== prevH) {
+      // Trigger renderer resize in main() after it is created
+      if (window.__renderer && window.__renderer.resize) {
+        window.__renderer.resize(canvas.width, canvas.height);
+      }
+      renderUniformsViews.texel_size.set([1.0 / canvas.width, 1.0 / canvas.height]);
+    }
+  });
 
   return { canvas, device, presentationFormat, context };
 }
@@ -91,6 +110,8 @@ async function main() {
     
     const renderer = new FluidRenderer(device, canvas, presentationFormat, radius, fov, posvelBuffer, renderUniformBuffer);
     await renderer.initialize();
+    // Expose to resize handler
+    window.__renderer = renderer;
     
     const camera = new Camera(canvasElement);
     
@@ -113,6 +134,10 @@ async function main() {
     simulationFolder.add({ isPaused: isPaused }, 'isPaused').name('Pause Simulation').onChange((value) => {
       isPaused = value;
     });
+    const simState = { substeps: 2 };
+    simulationFolder.add(simState, 'substeps', 1, 4, 1).name('Substeps').onChange((v) => {
+      simulator.setSubsteps(v|0);
+    });
     
     simulationFolder.add({ 
       addParticles: () => addMoreParticles() 
@@ -127,6 +152,9 @@ async function main() {
         waveTime = 0;
       } else {
       }
+    });
+    waveFolder.add({ amplitude: waveAmplitude }, 'amplitude', 0.0, 1.0, 0.01).name('Wave Amplitude').onChange((v) => {
+      waveAmplitude = v;
     });
     
     waveFolder.open();
@@ -146,12 +174,23 @@ async function main() {
         renderer.setWireframeMode(wireframeEnabled);
       }
     });
-    
+
     renderingFolder.add({ boundingBoxEnabled: boundingBoxEnabled }, 'boundingBoxEnabled').name('Show Bounding Box').onChange((value) => {
       boundingBoxEnabled = value;
       if (renderer && renderer.setBoundingBoxMode) {
         renderer.setBoundingBoxMode(boundingBoxEnabled);
       }
+    });
+    const renderState = { resolutionScale: 1.0 };
+    renderingFolder.add(renderState, 'resolutionScale', 0.5, 2.0, 0.1).name('Resolution Scale').onChange((s) => {
+      const w = Math.max(1, Math.floor(devicePixelRatio * canvas.clientWidth * s));
+      const h = Math.max(1, Math.floor(devicePixelRatio * canvas.clientHeight * s));
+      canvas.width = w;
+      canvas.height = h;
+      if (renderer && renderer.resize) {
+        renderer.resize(w, h);
+      }
+      renderUniformsViews.texel_size.set([1.0 / canvas.width, 1.0 / canvas.height]);
     });
     
     renderingFolder.open();
@@ -199,6 +238,19 @@ async function main() {
     let uniformsNeedUpdate = true;
 
     let lastTime = performance.now();
+    // Simple CPU-side benchmarking of command submission times
+    let benchEl = document.createElement('div');
+    benchEl.style.position = 'fixed';
+    benchEl.style.right = '8px';
+    benchEl.style.top = '8px';
+    benchEl.style.zIndex = '101';
+    benchEl.style.font = '12px monospace';
+    benchEl.style.background = 'rgba(0,0,0,0.4)';
+    benchEl.style.color = '#fff';
+    benchEl.style.padding = '6px 8px';
+    benchEl.style.borderRadius = '4px';
+    document.body.appendChild(benchEl);
+    let avgCompute = 0, avgRender = 0, avgFrame = 0, samples = 0;
     async function frame(currentTime) {
       stats.begin();
 
@@ -234,11 +286,24 @@ async function main() {
       const commandEncoder = device.createCommandEncoder();
 
       if (!isPaused) {
+        const t0 = performance.now();
         simulator.execute(commandEncoder);
+        const t1 = performance.now();
+        avgCompute = (avgCompute * samples + (t1 - t0)) / (samples + 1);
       }
+      const r0 = performance.now();
       renderer.execute(context, commandEncoder, simulator.numParticles);
+      const r1 = performance.now();
+      avgRender = (avgRender * samples + (r1 - r0)) / (samples + 1);
 
+      const f0 = performance.now();
       device.queue.submit([commandEncoder.finish()]);
+      const f1 = performance.now();
+      avgFrame = (avgFrame * samples + (f1 - f0)) / (samples + 1);
+      samples++;
+      if ((samples % 30) === 0) {
+        benchEl.textContent = `CPU submit avg ms — compute: ${avgCompute.toFixed(2)} render: ${avgRender.toFixed(2)} submit: ${avgFrame.toFixed(2)}`;
+      }
       
       stats.end();
       requestAnimationFrame(frame);
@@ -246,11 +311,7 @@ async function main() {
 
     requestAnimationFrame(frame);
     
-    setInterval(() => {
-      
-      if (Math.floor(Date.now() / 10000) % 30 === 0) {
-      }
-    }, 5000);
+    // No-op interval removed
   } catch (error) {
   }
 }

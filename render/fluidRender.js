@@ -91,12 +91,7 @@ export class FluidRenderer {
             }
         })
 
-        const depthTestTexture = this.device.createTexture({
-            size: [this.canvas.width, this.canvas.height, 1],
-            format: 'depth32float',
-            usage: GPUTextureUsage.RENDER_ATTACHMENT,
-        })
-        this.depthTestTextureView = depthTestTexture.createView()
+        this._createDepthTexture(this.canvas.width, this.canvas.height);
 
         this.sphereBindGroup = this.device.createBindGroup({
             label: 'sphere bind group', 
@@ -131,6 +126,22 @@ export class FluidRenderer {
 
     setBoundingBoxMode(enabled) {
         this.boundingBoxEnabled = enabled;
+    }
+
+    resize(width, height) {
+        // Recreate depth texture with new size and drop cached color view
+        this._createDepthTexture(width, height);
+        this.cachedColorView = null;
+        this.lastTexture = null;
+    }
+
+    _createDepthTexture(width, height) {
+        const depthTestTexture = this.device.createTexture({
+            size: [Math.max(1, width), Math.max(1, height), 1],
+            format: 'depth32float',
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+        this.depthTestTextureView = depthTestTexture.createView();
     }
 
     execute(context, commandEncoder, numParticles) {

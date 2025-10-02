@@ -49,7 +49,6 @@ export class Camera {
         // Mouse controls (different behavior based on camera mode)
         canvasElement.addEventListener("mousedown", (event) => {
             event.preventDefault();
-            console.log("Camera: mousedown detected, setting isDragging to true");
             this.isDragging = true;
             this.prevX = event.clientX;
             this.prevY = event.clientY;
@@ -77,7 +76,6 @@ export class Camera {
 
         canvasElement.addEventListener("mousemove", (event) => {
             if (this.isDragging) {
-                console.log("Camera: mousemove detected while dragging");
                 let deltaX, deltaY;
 
                 if (this.mode === 'coolcal' && document.pointerLockElement === canvasElement) {
@@ -96,14 +94,12 @@ export class Camera {
 
                 // Camera rotation - works regardless of simulation pause state
                 if (this.mode === 'orbit') {
-                    console.log(`Camera: orbit mode rotation - deltaX: ${deltaX}, deltaY: ${deltaY}`);
                     this.currentXtheta += this.orbitSensitivity * deltaX;
                     this.currentYtheta += this.orbitSensitivity * deltaY;
                     if (this.currentYtheta > this.maxYTheta) this.currentYtheta = this.maxYTheta;
                     if (this.currentYtheta < this.minYTheta) this.currentYtheta = this.minYTheta;
                     this.recalculateView();
                 } else {
-                    console.log(`Camera: free camera rotation - deltaX: ${deltaX}, deltaY: ${deltaY}`);
                     this.yaw -= deltaX * this.mouseSensitivity;
                     this.pitch -= deltaY * this.mouseSensitivity;
                     this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch));
@@ -139,35 +135,28 @@ export class Camera {
                 case 'ArrowUp':
                 case 'KeyW':
                     this.keys.forward = true;
-                    console.log("Forward movement activated");
                     break;
                 case 'ArrowDown':
                 case 'KeyS':
                     this.keys.backward = true;
-                    console.log("Backward movement activated");
                     break;
                 case 'ArrowLeft':
                 case 'KeyA':
                     this.keys.right = true;  // A and ArrowLeft move right
-                    console.log("Right movement activated");
                     break;
                 case 'ArrowRight':
                 case 'KeyD':
                     this.keys.left = true;   // D and ArrowRight move left
-                    console.log("Left movement activated");
                     break;
                 case 'Space':
                     this.keys.up = true;
-                    console.log("Up movement activated");
                     break;
                 case 'ShiftLeft':
                 case 'KeyC':
                     this.keys.down = true;
-                    console.log("Down movement activated");
                     break;
                 case 'ControlLeft':
                     this.keys.fast = true;
-                    console.log("Fast movement activated");
                     break;
             }
         });
@@ -206,7 +195,6 @@ export class Camera {
 
     setCameraMode(mode) {
         this.mode = mode;
-        console.log(`Camera mode switched to: ${mode}`);
     }
 
     reset(canvasElement, initDistance, target, fov, zoomRate) {
@@ -305,7 +293,6 @@ export class Camera {
     }
 
     recalculateView() {
-        console.log(`Camera: recalculateView called - mode: ${this.mode}, theta: ${this.currentXtheta}, ${this.currentYtheta}, distance: ${this.currentDistance}`);
         let view;
         
         if (this.mode === 'orbit') {
@@ -322,7 +309,6 @@ export class Camera {
                 this.target, // target
                 [0, 1, 0], // up
             );
-            console.log(`Camera: new position calculated: [${position[0].toFixed(2)}, ${position[1].toFixed(2)}, ${position[2].toFixed(2)}]`);
         } else {
             // Free camera (coolcal) logic
             const target = vec3.add(this.position, this.forward);
@@ -335,6 +321,5 @@ export class Camera {
 
         renderUniformsViews.view_matrix.set(view);
         renderUniformsViews.inv_view_matrix.set(mat4.inverse(view));
-        console.log("Camera: view matrix updated in renderUniformsViews");
     }
 }

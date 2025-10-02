@@ -15,6 +15,10 @@ export class MLSMPMSimulator {
         this.device = device
         this.particleBuffer = particleBuffer
         this.posvelBuffer = posvelBuffer
+        this.substeps = 2
+        // Reusable small buffers to avoid per-frame allocations
+        this._realBoxSizeView = new Float32Array(3);
+        this._initBoxSizeView = new Float32Array(3);
     }
 
     async initialize() {
@@ -165,7 +169,8 @@ export class MLSMPMSimulator {
     }
 
     initDambreak(initBoxSize, numParticles) {
-        let particlesBuf = new ArrayBuffer(mlsmpmParticleStructSize * numParticlesMax);
+        // Allocate only as many as needed instead of numParticlesMax
+        let particlesBuf = new ArrayBuffer(mlsmpmParticleStructSize * numParticles);
         const spacing = 0.95; // Reduced spacing to fit more particles
 
         this.numParticles = 0;
@@ -203,26 +208,23 @@ export class MLSMPMSimulator {
     }
 
     reset(numParticles, initBoxSize) {
-        renderUniformsViews.sphere_size.set([this.renderDiameter])
+        renderUniformsViews.sphere_size.set([this.renderDiameter, this.renderDiameter])
         this.initDambreak(initBoxSize, numParticles);
         const maxGridCount = this.max_x_grids * this.max_y_grids * this.max_z_grids;
         this.gridCount = Math.ceil(initBoxSize[0]) * Math.ceil(initBoxSize[1]) * Math.ceil(initBoxSize[2]);
         if (this.gridCount > maxGridCount) {
             throw new Error("gridCount should be equal to or less than maxGridCount")
         }
-        const realBoxSizeValues = new ArrayBuffer(12);
-        const realBoxSizeViews = new Float32Array(realBoxSizeValues);
-        const initBoxSizeValues = new ArrayBuffer(12);
-        const initBoxSizeViews = new Float32Array(initBoxSizeValues);
-        initBoxSizeViews.set(initBoxSize);    
-        realBoxSizeViews.set(initBoxSize); 
-        this.device.queue.writeBuffer(this.initBoxSizeBuffer, 0, initBoxSizeValues);
-        this.device.queue.writeBuffer(this.realBoxSizeBuffer, 0, realBoxSizeValues);
+        this._initBoxSizeView.set(initBoxSize);
+        this._realBoxSizeView.set(initBoxSize);
+        this.device.queue.writeBuffer(this.initBoxSizeBuffer, 0, this._initBoxSizeView);
+        this.device.queue.writeBuffer(this.realBoxSizeBuffer, 0, this._realBoxSizeView);
     }
 
     execute(commandEncoder) {
         const computePass = commandEncoder.beginComputePass();
-        for (let i = 0; i < 2; i++) { 
+        const substeps = this.substeps | 0;
+        for (let i = 0; i < (substeps > 0 ? substeps : 1); i++) { 
             computePass.setBindGroup(0, this.clearGridBindGroup);
             computePass.setPipeline(this.clearGridPipeline);
             computePass.dispatchWorkgroups(Math.ceil(this.gridCount / 64))
@@ -246,10 +248,12 @@ export class MLSMPMSimulator {
     }
 
     changeBoxSize(realBoxSize) {
-        const realBoxSizeValues = new ArrayBuffer(12);
-        const realBoxSizeViews = new Float32Array(realBoxSizeValues);
-        realBoxSizeViews.set(realBoxSize)
-        this.device.queue.writeBuffer(this.realBoxSizeBuffer, 0, realBoxSizeViews)
+        this._realBoxSizeView.set(realBoxSize)
+        this.device.queue.writeBuffer(this.realBoxSizeBuffer, 0, this._realBoxSizeView)
+    }
+
+    setSubsteps(n) {
+        this.substeps = n | 0;
     }
 
     addSphere(centerX, centerY, centerZ, radius, numSphereParticles) {
