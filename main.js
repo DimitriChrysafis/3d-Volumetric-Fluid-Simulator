@@ -33,7 +33,6 @@ async function init() {
     throw new Error();
   }
 
-  let devicePixelRatio = 3.0;
   let devicePixelRatio = Math.min(2, (window.devicePixelRatio || 1));
   const resizeCanvas = () => {
     // Recompute DPR on resize to adapt to user changes
