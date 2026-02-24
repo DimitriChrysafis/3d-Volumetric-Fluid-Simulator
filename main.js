@@ -3,7 +3,7 @@ import { MLSMPMSimulator, mlsmpmParticleStructSize } from './mls-mpm/mls-mpm.js'
 import { FluidRenderer } from './render/fluidRender.js'
 import { renderUniformsValues, renderUniformsViews, numParticlesMax } from './common.js'
 import { FrustumCuller } from './optimization/frustumCulling.js'
-import { mat4 } from 'https://cdn.skypack.dev/wgpu-matrix'
+import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.min.js'
 
 const BOX_WIDTH = 100;
 const BOX_HEIGHT = 100;
