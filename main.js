@@ -1,9 +1,9 @@
 import { Camera } from './camera.js'
-import { MLSMPMSimulator, mlsmpmParticleStructSize } from './mls-mpm/mls-mpm.js'
+import { ParticleGridFluidSimulator, fluidParticleStructSize } from './fluid/particleGridFluid.js?v=20260307b'
 import { FluidRenderer } from './render/fluidRender.js'
 import { renderUniformsValues, renderUniformsViews, numParticlesMax } from './common.js'
-import { FrustumCuller } from './optimization/frustumCulling.js'
-import { mat4 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.min.js'
+import { FrustumCuller } from './optimization/frustumCulling.js?v=20260307b'
+import { mat4 } from './node_modules/wgpu-matrix/dist/3.x/wgpu-matrix.module.js'
 
 const BOX_WIDTH = 100;
 const BOX_HEIGHT = 100;
@@ -64,7 +64,11 @@ async function init() {
 }
 
 async function main() {
+  const startupDeadline = Date.now() + 5000;
   while (!window.dat || !window.Stats) {
+    if (Date.now() > startupDeadline) {
+      throw new Error('UI libraries failed to load. Check local asset paths or network requests.');
+    }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   
@@ -90,7 +94,7 @@ async function main() {
 
     const particleBuffer = device.createBuffer({
       label: 'particles buffer',
-      size: mlsmpmParticleStructSize * numParticlesMax,
+      size: fluidParticleStructSize * numParticlesMax,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
@@ -106,7 +110,7 @@ async function main() {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const simulator = new MLSMPMSimulator(particleBuffer, posvelBuffer, diameter, device, BOX_WIDTH, BOX_HEIGHT, BOX_DEPTH);
+    const simulator = new ParticleGridFluidSimulator(particleBuffer, posvelBuffer, diameter, device, BOX_WIDTH, BOX_HEIGHT, BOX_DEPTH);
     await simulator.initialize();
 
     // Setup frustum culling and default visibility (all visible)
@@ -306,6 +310,18 @@ async function main() {
     
     // No-op interval removed
   } catch (error) {
+    const errorLog = document.getElementById('error-reason');
+    const message = error instanceof Error ? error.message : String(error);
+    if (errorLog) {
+      errorLog.textContent = message;
+      errorLog.style.color = 'red';
+      errorLog.style.background = 'rgba(255,255,255,0.85)';
+      errorLog.style.padding = '8px 12px';
+      errorLog.style.borderRadius = '6px';
+      errorLog.style.maxWidth = '80vw';
+      errorLog.style.zIndex = '9999';
+    }
+    console.error(error);
   }
 }
 

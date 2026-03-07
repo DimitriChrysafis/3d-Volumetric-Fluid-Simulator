@@ -67,7 +67,7 @@ fn cullParticles(@builtin(global_invocation_id) id: vec3<u32>) {
         this.visibilityBuffer = this.device.createBuffer({
             label: 'visibility buffer',
             size: maxParticles * 4,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
         });
 
         this.frustumPlanesBuffer = this.device.createBuffer({

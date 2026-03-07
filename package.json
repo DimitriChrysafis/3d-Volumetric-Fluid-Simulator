@@ -7,6 +7,8 @@
     "serve": "python3 -m http.server 8080 || python -m http.server 8080 || npx serve ."
   },
   "dependencies": {
-    "stats.js": "^0.17.0"
+    "dat.gui": "^0.7.9",
+    "stats.js": "^0.17.0",
+    "wgpu-matrix": "^3.4.2"
   }
 }
