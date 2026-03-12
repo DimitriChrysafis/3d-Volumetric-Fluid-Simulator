@@ -1,13 +1,22 @@
-import { Camera } from './camera.js'
-import { ParticleGridFluidSimulator, fluidParticleStructSize } from './fluid/particleGridFluid.js?v=20260307b'
-import { FluidRenderer } from './render/fluidRender.js'
-import { renderUniformsValues, renderUniformsViews, numParticlesMax } from './common.js'
-import { FrustumCuller } from './optimization/frustumCulling.js?v=20260307b'
-import { mat4 } from './node_modules/wgpu-matrix/dist/3.x/wgpu-matrix.module.js'
+import { Camera } from './camera.js?v=20260310p'
+import { MLSMPMSimulator, mlsmpmParticleStructSize } from './mls-mpm/mls-mpm.js?v=20260310p'
+import { FluidRenderer } from './render/fluidRender.js?v=20260310k'
+import { renderUniformsValues, renderUniformsViews, numParticlesMax } from './common.js?v=20260310p'
 
 const BOX_WIDTH = 100;
-const BOX_HEIGHT = 100;
-const BOX_DEPTH = 100;
+const BOX_HEIGHT = 190;
+const BASE_BOX_DEPTH = 100;
+const MAX_BOX_DEPTH = 220;
+const SCENE_PULLBACK_RATIO = 0.5;
+
+const DEFAULT_BOX_LENGTH = 220;
+const DEFAULT_MIN_LENGTH = 120;
+const DEFAULT_PERIOD_SECONDS = 8.0;
+const DEFAULT_FLUID_LENGTH = 100;
+const DEFAULT_PISTON_POWER = 0.7;
+const DEFAULT_PUSH_WIDTH = 3.0;
+const DEFAULT_PARTICLE_COUNT = 400000;
+const DEFAULT_CAMERA_DISTANCE = 275;
 
 async function init() {
   const canvas = document.querySelector('canvas');
@@ -25,7 +34,7 @@ async function init() {
     throw new Error('WebGPU is not supported on your browser.');
   }
 
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
     throw new Error('WebGPU adapter is not available in this browser session.');
   }
@@ -42,43 +51,21 @@ async function init() {
     throw new Error();
   }
 
-  let devicePixelRatio = Math.min(2, (window.devicePixelRatio || 1));
-  const resizeCanvas = () => {
-    // Recompute DPR on resize to adapt to user changes
-    devicePixelRatio = Math.min(2, (window.devicePixelRatio || 1));
-    canvas.width = Math.max(1, Math.floor(devicePixelRatio * canvas.clientWidth));
-    canvas.height = Math.max(1, Math.floor(devicePixelRatio * canvas.clientHeight));
-  };
-  resizeCanvas();
+  const devicePixelRatio = 3.0;
+  canvas.width = devicePixelRatio * canvas.clientWidth;
+  canvas.height = devicePixelRatio * canvas.clientHeight;
 
   const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format: presentationFormat, alphaMode: 'opaque' });
-
-  // Keep canvas/resolution in sync
-  window.addEventListener('resize', () => {
-    const prevW = canvas.width, prevH = canvas.height;
-    resizeCanvas();
-    if (canvas.width !== prevW || canvas.height !== prevH) {
-      // Trigger renderer resize in main() after it is created
-      if (window.__renderer && window.__renderer.resize) {
-        window.__renderer.resize(canvas.width, canvas.height);
-      }
-      renderUniformsViews.texel_size.set([1.0 / canvas.width, 1.0 / canvas.height]);
-    }
-  });
+  context.configure({ device, format: presentationFormat });
 
   return { canvas, device, presentationFormat, context };
 }
 
 async function main() {
-  const startupDeadline = Date.now() + 5000;
   while (!window.dat || !window.Stats) {
-    if (Date.now() > startupDeadline) {
-      throw new Error('UI libraries failed to load. Check local asset paths or network requests.');
-    }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  
+
   try {
     const { canvas, device, presentationFormat, context } = await init();
     const stats = new window.Stats();
@@ -89,8 +76,7 @@ async function main() {
     stats.dom.style.zIndex = '100';
     document.body.appendChild(stats.dom);
 
-
-    const canvasElement = document.getElementById("fluidCanvas");
+    const canvasElement = document.getElementById('fluidCanvas');
     const fov = 45 * Math.PI / 180;
     const radius = 0.75;
     const diameter = 2 * radius;
@@ -101,7 +87,7 @@ async function main() {
 
     const particleBuffer = device.createBuffer({
       label: 'particles buffer',
-      size: fluidParticleStructSize * numParticlesMax,
+      size: mlsmpmParticleStructSize * numParticlesMax,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
@@ -117,114 +103,199 @@ async function main() {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const simulator = new ParticleGridFluidSimulator(particleBuffer, posvelBuffer, diameter, device, BOX_WIDTH, BOX_HEIGHT, BOX_DEPTH);
+    const simulator = new MLSMPMSimulator(particleBuffer, posvelBuffer, diameter, device, BOX_WIDTH, BOX_HEIGHT, MAX_BOX_DEPTH);
     await simulator.initialize();
 
-    // Setup frustum culling and default visibility (all visible)
-    const culler = new FrustumCuller(device);
-    await culler.initialize(numParticlesMax);
-    const ones = new Uint32Array(numParticlesMax);
-    ones.fill(1);
-    device.queue.writeBuffer(culler.visibilityBuffer, 0, ones);
-    const cullBindGroup = culler.createBindGroup(posvelBuffer, renderUniformBuffer);
-
-    const renderer = new FluidRenderer(device, canvas, presentationFormat, radius, fov, posvelBuffer, renderUniformBuffer, culler.visibilityBuffer);
+    const renderer = new FluidRenderer(device, canvas, presentationFormat, radius, fov, posvelBuffer, renderUniformBuffer);
     await renderer.initialize();
-    // Expose to resize handler
-    window.__renderer = renderer;
-    
+
     const camera = new Camera(canvasElement);
-    
-    let isPaused = false;
-    let waveEnabled = true;
-    let waveTime = 0;
-    let waveAmplitude = 0.40;
-    // let boxDepth = 100; // unused
-    
-    let wireframeEnabled = true;
 
-    renderer.setWireframeMode(wireframeEnabled);
-    
+    const simulationSettings = {
+      isPaused: false,
+      addParticles: () => addMoreParticles(),
+      resetSimulation: () => resetSimulation({ resetTime: true, resetCamera: false }),
+    };
+    const worldSettings = {
+      boxLength: DEFAULT_BOX_LENGTH,
+      fluidLength: DEFAULT_FLUID_LENGTH,
+    };
+    const pistonSettings = {
+      pistonEnabled: true,
+      minLength: DEFAULT_MIN_LENGTH,
+      period: DEFAULT_PERIOD_SECONDS,
+      power: DEFAULT_PISTON_POWER,
+      pushWidth: DEFAULT_PUSH_WIDTH,
+    };
+    const cameraSettings = {
+      cameraMode: 'orbit',
+      resetView: () => resetCameraView(),
+    };
+    const qualitySettings = {
+      quality: 'low',
+    };
+
+    let pistonTime = Math.PI * 0.5;
+    const gridBoxSize = [BOX_WIDTH, BOX_HEIGHT, MAX_BOX_DEPTH];
+    let currentParticleCount = DEFAULT_PARTICLE_COUNT;
+    let realBoxSize = [BOX_WIDTH, BOX_HEIGHT, worldSettings.boxLength];
+    let previousDepth = realBoxSize[2];
+    let uniformsNeedUpdate = true;
+
+    const controllerRefs = {};
     const gui = new dat.GUI();
-    
-    const simulationFolder = gui.addFolder('Simulation');
-    simulationFolder.add({ isPaused: isPaused }, 'isPaused').name('Pause Simulation').onChange((value) => {
-      isPaused = value;
-    });
-    const simState = { substeps: 2 };
-    simulationFolder.add(simState, 'substeps', 1, 4, 1).name('Substeps').onChange((v) => {
-      simulator.setSubsteps(v|0);
-    });
-    
-    simulationFolder.add({ 
-      addParticles: () => addMoreParticles() 
-    }, 'addParticles').name('Add 10,000 Particles');
-    
-    simulationFolder.open();
-    
-    const waveFolder = gui.addFolder('Wave Controls');
-    waveFolder.add({ waveEnabled: waveEnabled }, 'waveEnabled').name('Enable Moving Wall').onChange((value) => {
-      waveEnabled = value;
-      if (waveEnabled) {
-        waveTime = 0;
-      } else {
-      }
-    });
-    waveFolder.add({ amplitude: waveAmplitude }, 'amplitude', 0.0, 1.0, 0.01).name('Wave Amplitude').onChange((v) => {
-      waveAmplitude = v;
-    });
-    
-    waveFolder.open();
-    
-    const cameraFolder = gui.addFolder('Camera');
-    let cameraMode = 'orbit';
-    cameraFolder.add({ cameraMode: cameraMode }, 'cameraMode', ['orbit', 'coolcal']).name('Camera Mode').onChange((value) => {
-      cameraMode = value;
-      camera.setCameraMode(value);
-    });
-    cameraFolder.open();
-    
-    const renderingFolder = gui.addFolder('Rendering');
-    renderingFolder.add({ wireframeEnabled: wireframeEnabled }, 'wireframeEnabled').name('potato friendly mode').onChange((value) => {
-      wireframeEnabled = value;
-      if (renderer && renderer.setWireframeMode) {
-        renderer.setWireframeMode(wireframeEnabled);
-      }
-    });
 
-    const renderState = { resolutionScale: 1.0, cullingEnabled: true };
-    renderingFolder.add(renderState, 'resolutionScale', 0.5, 2.0, 0.1).name('Resolution Scale').onChange((s) => {
-      const w = Math.max(1, Math.floor(devicePixelRatio * canvas.clientWidth * s));
-      const h = Math.max(1, Math.floor(devicePixelRatio * canvas.clientHeight * s));
-      canvas.width = w;
-      canvas.height = h;
-      if (renderer && renderer.resize) {
-        renderer.resize(w, h);
+    function clampSettings() {
+      worldSettings.boxLength = Math.max(BASE_BOX_DEPTH, Math.min(MAX_BOX_DEPTH, worldSettings.boxLength));
+      worldSettings.fluidLength = Math.max(40, Math.min(worldSettings.boxLength, worldSettings.fluidLength));
+      pistonSettings.minLength = Math.max(60, Math.min(worldSettings.boxLength, pistonSettings.minLength));
+      pistonSettings.period = Math.max(0.5, pistonSettings.period);
+      pistonSettings.power = Math.max(0.0, Math.min(2.0, pistonSettings.power));
+      pistonSettings.pushWidth = Math.max(0.5, Math.min(8.0, pistonSettings.pushWidth));
+    }
+
+    function refreshControllerDisplays() {
+      Object.values(controllerRefs).forEach((controller) => controller.updateDisplay());
+    }
+
+    function getRenderZOffset() {
+      return BASE_BOX_DEPTH - worldSettings.boxLength * (1 + SCENE_PULLBACK_RATIO);
+    }
+
+    function getCameraTargetZ() {
+      return 68 + getRenderZOffset() * 0.5;
+    }
+
+    function applyLiveSettings() {
+      clampSettings();
+      simulator.setInitialFluidDepth(worldSettings.fluidLength);
+      simulator.setBoundaryCouplingWidth(pistonSettings.pushWidth);
+      simulator.setPistonPower(pistonSettings.power);
+      renderUniformsViews.render_z_offset[0] = getRenderZOffset();
+      renderUniformsViews.box_anchor_z[0] = worldSettings.boxLength;
+    }
+
+    function resetCameraView() {
+      applyLiveSettings();
+      camera.reset(canvasElement, DEFAULT_CAMERA_DISTANCE, [BOX_WIDTH / 2, 18, getCameraTargetZ()], fov, zoomRate);
+      camera.setCameraMode(cameraSettings.cameraMode);
+      uniformsNeedUpdate = true;
+    }
+
+    function resetSimulation({ resetTime = true, resetCamera = true } = {}) {
+      applyLiveSettings();
+      const activeBoxSize = [BOX_WIDTH, BOX_HEIGHT, worldSettings.boxLength];
+      simulator.reset(currentParticleCount, gridBoxSize, activeBoxSize);
+      realBoxSize = [...activeBoxSize];
+      previousDepth = realBoxSize[2];
+      if (resetTime) {
+        pistonTime = Math.PI * 0.5;
       }
-      renderUniformsViews.texel_size.set([1.0 / canvas.width, 1.0 / canvas.height]);
-    });
-    renderingFolder.add(renderState, 'cullingEnabled').name('Enable Frustum Culling');
-    
-    renderingFolder.open();
-    
+      if (!pistonSettings.pistonEnabled) {
+        realBoxSize[2] = worldSettings.boxLength;
+        previousDepth = realBoxSize[2];
+      }
+      if (resetCamera) {
+        resetCameraView();
+      }
+      renderUniformsViews.box_size.set(realBoxSize);
+      renderUniformsViews.render_z_offset[0] = getRenderZOffset();
+      renderUniformsViews.box_anchor_z[0] = worldSettings.boxLength;
+      device.queue.writeBuffer(renderUniformBuffer, 0, renderUniformsValues);
+      uniformsNeedUpdate = false;
+      refreshControllerDisplays();
+    }
+
     function addMoreParticles() {
       const centerX = BOX_WIDTH / 2;
       const centerY = BOX_HEIGHT / 2;
-      const centerZ = BOX_DEPTH / 2;
-      const radius = 5;
+      const centerZ = Math.max(10, realBoxSize[2] - 18);
+      const sphereRadius = 5;
       const numSphereParticles = 10000;
-      
-      simulator.addSphere(centerX, centerY, centerZ, radius, numSphereParticles);
+
+      simulator.addSphere(centerX, centerY, centerZ, sphereRadius, numSphereParticles);
     }
-    
+
+    renderer.setQualityMode(qualitySettings.quality);
+
+    const simulationFolder = gui.addFolder('Simulation');
+    controllerRefs.isPaused = simulationFolder.add(simulationSettings, 'isPaused').name('Pause Simulation').onChange((value) => {
+      simulationSettings.isPaused = value;
+    });
+    simulationFolder.add(simulationSettings, 'addParticles').name('Add 10,000 Particles');
+    simulationFolder.add(simulationSettings, 'resetSimulation').name('Reset Fluid');
+    simulationFolder.open();
+
+    const worldFolder = gui.addFolder('World');
+    controllerRefs.boxLength = worldFolder.add(worldSettings, 'boxLength', BASE_BOX_DEPTH, MAX_BOX_DEPTH, 5).name('Box Length').onChange(() => {
+      applyLiveSettings();
+      uniformsNeedUpdate = true;
+      refreshControllerDisplays();
+    }).onFinishChange(() => {
+      resetSimulation({ resetTime: true, resetCamera: false });
+    });
+    controllerRefs.fluidLength = worldFolder.add(worldSettings, 'fluidLength', 40, MAX_BOX_DEPTH, 5).name('Fluid Seed').onChange(() => {
+      applyLiveSettings();
+      refreshControllerDisplays();
+    }).onFinishChange(() => {
+      resetSimulation({ resetTime: true, resetCamera: false });
+    });
+    worldFolder.open();
+
+    const pistonFolder = gui.addFolder('Piston Controls');
+    controllerRefs.pistonEnabled = pistonFolder.add(pistonSettings, 'pistonEnabled').name('Enable Piston').onChange((value) => {
+      pistonSettings.pistonEnabled = value;
+      if (value) {
+        pistonTime = Math.PI * 0.5;
+      } else {
+        realBoxSize[2] = worldSettings.boxLength;
+        previousDepth = realBoxSize[2];
+        uniformsNeedUpdate = true;
+      }
+    });
+    controllerRefs.minLength = pistonFolder.add(pistonSettings, 'minLength', 60, MAX_BOX_DEPTH, 5).name('Min Length').onChange(() => {
+      applyLiveSettings();
+      uniformsNeedUpdate = true;
+      refreshControllerDisplays();
+    });
+    controllerRefs.period = pistonFolder.add(pistonSettings, 'period', 1.0, 16.0, 0.1).name('Period (s)').onChange(() => {
+      clampSettings();
+      refreshControllerDisplays();
+    });
+    controllerRefs.power = pistonFolder.add(pistonSettings, 'power', 0.0, 2.0, 0.05).name('Power').onChange(() => {
+      applyLiveSettings();
+    });
+    controllerRefs.pushWidth = pistonFolder.add(pistonSettings, 'pushWidth', 0.5, 8.0, 0.25).name('Push Width').onChange(() => {
+      applyLiveSettings();
+    });
+    pistonFolder.open();
+
+    const cameraFolder = gui.addFolder('Camera');
+    controllerRefs.cameraMode = cameraFolder.add(cameraSettings, 'cameraMode', ['orbit', 'coolcal']).name('Camera Mode').onChange((value) => {
+      cameraSettings.cameraMode = value;
+      camera.setCameraMode(value);
+    });
+    cameraFolder.add(cameraSettings, 'resetView').name('Reset View');
+    cameraFolder.open();
+
+    const renderingFolder = gui.addFolder('Rendering');
+    controllerRefs.quality = renderingFolder.add(qualitySettings, 'quality', {
+      'Low (Potato)': 'low',
+      'Medium': 'medium',
+    }).name('Quality').onChange((value) => {
+      qualitySettings.quality = value;
+      renderer.setQualityMode(value);
+    });
+    renderingFolder.open();
+
     document.addEventListener('keydown', function(event) {
       if (event.key.toLowerCase() === 'p') {
         event.preventDefault();
-        isPaused = !isPaused;
-        gui.updateDisplay();
+        simulationSettings.isPaused = !simulationSettings.isPaused;
+        refreshControllerDisplays();
       }
     });
-    
+
     document.addEventListener('keydown', function(event) {
       if (event.key.toLowerCase() === 'g') {
         addMoreParticles();
@@ -232,21 +303,13 @@ async function main() {
     });
 
     let errorLog = document.getElementById('error-reason');
-    errorLog.textContent = "";
+    errorLog.textContent = '';
     device.lost.then(info => {
       const reason = info.reason ? `reason: ${info.reason}` : 'unknown reason';
       errorLog.textContent = reason;
     });
 
-    let currentParticleCount = 400000;
-    let initBoxSize = [BOX_WIDTH, BOX_HEIGHT, BOX_DEPTH];
-    let realBoxSize = [...initBoxSize];
-    simulator.reset(currentParticleCount, initBoxSize);
-    
-    camera.reset(canvasElement, 145, [BOX_WIDTH / 2, 18, 68], fov, zoomRate);
-
-    let boxWidthRatio = 1.0;
-    let prevBoxSize = [...realBoxSize];
+    resetSimulation({ resetTime: false, resetCamera: true });
 
     let lastTime = performance.now();
     async function frame(currentTime) {
@@ -255,58 +318,54 @@ async function main() {
       const deltaTime = (currentTime - lastTime) / 1000;
       lastTime = currentTime;
 
-      // Always allow camera updates regardless of pause state
       camera.update(deltaTime);
+      const cameraDirty = camera.consumeDirty();
+      let pistonVelocity = 0;
 
-      if (!isPaused) {
-        if (waveEnabled) {
-          waveTime += 0.02;
-          boxWidthRatio = 1.0 + Math.sin(waveTime) * waveAmplitude;
-
-          boxWidthRatio = Math.max(0.2, Math.min(2.0, boxWidthRatio));
-
-          realBoxSize[2] = initBoxSize[2] * boxWidthRatio;
-          simulator.changeBoxSize(realBoxSize);
+      if (!simulationSettings.isPaused) {
+        if (pistonSettings.pistonEnabled) {
+          const pistonAngularSpeed = (2 * Math.PI) / pistonSettings.period;
+          pistonTime += deltaTime * pistonAngularSpeed;
+          const pistonBlend = 0.5 + 0.5 * Math.sin(pistonTime);
+          realBoxSize[2] = pistonSettings.minLength + (worldSettings.boxLength - pistonSettings.minLength) * pistonBlend;
+        } else {
+          realBoxSize[2] = worldSettings.boxLength;
         }
+
+        if (Math.abs(realBoxSize[2] - previousDepth) > 1e-3) {
+          pistonVelocity = (realBoxSize[2] - previousDepth) / Math.max(deltaTime, 1e-6);
+        }
+        uniformsNeedUpdate = true;
       }
 
-      // Always update uniforms every frame to ensure camera works while paused
-      renderUniformsViews.box_size.set(realBoxSize);
-      device.queue.writeBuffer(renderUniformBuffer, 0, renderUniformsValues);
-      
-      // Update tracking variables
-      if (realBoxSize[0] !== prevBoxSize[0] || realBoxSize[1] !== prevBoxSize[1] || realBoxSize[2] !== prevBoxSize[2]) {
-        prevBoxSize = [...realBoxSize];
+      if (uniformsNeedUpdate) {
+        renderUniformsViews.box_size.set(realBoxSize);
+        renderUniformsViews.render_z_offset[0] = getRenderZOffset();
+        renderUniformsViews.box_anchor_z[0] = worldSettings.boxLength;
       }
+
+      if (uniformsNeedUpdate || cameraDirty) {
+        device.queue.writeBuffer(renderUniformBuffer, 0, renderUniformsValues);
+      }
+      uniformsNeedUpdate = false;
 
       const commandEncoder = device.createCommandEncoder();
 
-      if (!isPaused) {
+      simulator.changeBoxSize(realBoxSize, pistonVelocity);
+      if (!simulationSettings.isPaused) {
         simulator.execute(commandEncoder);
-      }
-      // Frustum culling before rendering (optional)
-      {
-        const P = renderUniformsViews.projection_matrix;
-        const V = renderUniformsViews.view_matrix;
-        const VP = mat4.multiply(P, V);
-        if (renderState.cullingEnabled) {
-          culler.execute(commandEncoder, cullBindGroup, simulator.numParticles, VP);
-        } else {
-          // ensure first value visible (buffer is already ones initially)
-          device.queue.writeBuffer(culler.visibilityBuffer, 0, new Uint32Array([1]));
-        }
       }
       renderer.execute(context, commandEncoder, simulator.numParticles);
 
       device.queue.submit([commandEncoder.finish()]);
-      
+      previousDepth = realBoxSize[2];
+
       stats.end();
       requestAnimationFrame(frame);
     }
 
     requestAnimationFrame(frame);
-    
-    // No-op interval removed
+
   } catch (error) {
     const errorLog = document.getElementById('error-reason');
     const message = error instanceof Error ? error.message : String(error);

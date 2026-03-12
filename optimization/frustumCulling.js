@@ -1,7 +1,7 @@
 export class FrustumCuller {
     constructor(device) {
         this.device = device;
-        this.frustumPlanes = new Float32Array(24); // 6 planes * 4 components (a,b,c,d)
+        this.frustumPlanes = new Float32Array(24);
         this.visibilityBuffer = null;
         this.visibilityPipeline = null;
         this.initialized = false;
@@ -67,7 +67,7 @@ fn cullParticles(@builtin(global_invocation_id) id: vec3<u32>) {
         this.visibilityBuffer = this.device.createBuffer({
             label: 'visibility buffer',
             size: maxParticles * 4,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
         });
 
         this.frustumPlanesBuffer = this.device.createBuffer({

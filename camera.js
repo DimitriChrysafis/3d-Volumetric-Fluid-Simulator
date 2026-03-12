@@ -1,18 +1,15 @@
-import { mat4, vec3 } from 'https://wgpu-matrix.org/dist/3.x/wgpu-matrix.module.min.js'
-import { renderUniformsValues, renderUniformsViews } from './common.js'
+import { mat4, vec3 } from 'https://unpkg.com/wgpu-matrix@3.4.0/dist/3.x/wgpu-matrix.module.js'
+import { renderUniformsValues, renderUniformsViews } from './common.js?v=20260310p'
 
 export class Camera {
     constructor (canvasElement) {
-        // Camera mode: 'orbit' or 'coolcal'
-        this.mode = 'orbit'  // Start with orbit mode
-        
-        // Common properties
+        this.mode = 'orbit'
+
         this.isDragging = false
         this.prevX = 0
         this.prevY = 0
         this.fov = 0
-        
-        // Orbit camera properties (old camera)
+
         this.currentXtheta = 0
         this.currentYtheta = 0
         this.maxYTheta = 0
@@ -23,10 +20,9 @@ export class Camera {
         this.minDistance = 0
         this.target = []
         this.zoomRate = 0
-        
-        // Free camera properties (coolcal)
-        this.yaw = 0  // Left-right rotation
-        this.pitch = 0  // Up-down rotation
+
+        this.yaw = 0
+        this.pitch = 0
         this.mouseSensitivity = 0.005
         this.position = [0, 0, 0]
         this.forward = [0, 0, -1]
@@ -34,8 +30,8 @@ export class Camera {
         this.up = [0, 1, 0]
         this.moveSpeed = 80.0
         this.fastMoveSpeed = 320.0
-        
-        // Movement state
+        this.dirty = true
+
         this.keys = {
             forward: false,
             backward: false,
@@ -46,7 +42,6 @@ export class Camera {
             fast: false
         }
 
-        // Mouse controls (different behavior based on camera mode)
         canvasElement.addEventListener("mousedown", (event) => {
             event.preventDefault();
             this.isDragging = true;
@@ -60,14 +55,12 @@ export class Camera {
         canvasElement.addEventListener("wheel", (event) => {
             event.preventDefault();
             const scrollDelta = event.deltaY;
-            
+
             if (this.mode === 'orbit') {
-                // Orbit camera zoom
                 this.currentDistance += ((scrollDelta > 0) ? 1 : -1) * this.zoomRate;
                 if (this.currentDistance < this.minDistance) this.currentDistance = this.minDistance;
                 this.recalculateView();
             } else {
-                // Free camera forward/backward movement
                 const moveDirection = vec3.scale(this.forward, -scrollDelta * 0.1);
                 this.position = vec3.add(this.position, moveDirection);
                 this.recalculateView();
@@ -79,11 +72,9 @@ export class Camera {
                 let deltaX, deltaY;
 
                 if (this.mode === 'coolcal' && document.pointerLockElement === canvasElement) {
-                    // Use movement deltas when pointer is locked
                     deltaX = event.movementX;
                     deltaY = event.movementY;
                 } else {
-                    // Fallback to position deltas
                     const currentX = event.clientX;
                     const currentY = event.clientY;
                     deltaX = this.prevX - currentX;
@@ -92,7 +83,6 @@ export class Camera {
                     this.prevY = currentY;
                 }
 
-                // Camera rotation - works regardless of simulation pause state
                 if (this.mode === 'orbit') {
                     this.currentXtheta += this.orbitSensitivity * deltaX;
                     this.currentYtheta += this.orbitSensitivity * deltaY;
@@ -108,7 +98,7 @@ export class Camera {
                 }
             }
         });
-        
+
         canvasElement.addEventListener("mouseup", (event) => {
             this.isDragging = false;
             if (this.mode === 'coolcal' && document.pointerLockElement === canvasElement) {
@@ -116,21 +106,17 @@ export class Camera {
             }
         });
 
-        // Prevent context menu from interfering with right-click drag
         canvasElement.addEventListener("contextmenu", (event) => {
             event.preventDefault();
         });
 
-        // Keyboard controls for movement (only for coolcal mode)
         document.addEventListener("keydown", (event) => {
-            // Only handle movement keys in coolcal mode
             if (this.mode !== 'coolcal') return;
-            
-            // Prevent conflicts with existing key handlers
+
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyS', 'KeyA', 'KeyD', 'Space', 'ShiftLeft', 'KeyC', 'ControlLeft'].includes(event.code)) {
                 event.preventDefault();
             }
-            
+
             switch(event.code) {
                 case 'ArrowUp':
                 case 'KeyW':
@@ -142,11 +128,11 @@ export class Camera {
                     break;
                 case 'ArrowLeft':
                 case 'KeyA':
-                    this.keys.right = true;  // A and ArrowLeft move right
+                    this.keys.right = true;
                     break;
                 case 'ArrowRight':
                 case 'KeyD':
-                    this.keys.left = true;   // D and ArrowRight move left
+                    this.keys.left = true;
                     break;
                 case 'Space':
                     this.keys.up = true;
@@ -173,11 +159,11 @@ export class Camera {
                     break;
                 case 'ArrowLeft':
                 case 'KeyA':
-                    this.keys.right = false;  // A and ArrowLeft key release
+                    this.keys.right = false;
                     break;
                 case 'ArrowRight':
                 case 'KeyD':
-                    this.keys.left = false;   // D and ArrowRight key release
+                    this.keys.left = false;
                     break;
                 case 'Space':
                     this.keys.up = false;
@@ -201,33 +187,28 @@ export class Camera {
         this.fov = fov;
         this.target = target;
         this.zoomRate = zoomRate;
-        
-        // Setup orbit camera properties
-        this.currentXtheta = 0.55;
-        this.currentYtheta = -Math.PI / 14;
+
+        this.currentXtheta = 0.75 + Math.PI;
+        this.currentYtheta = -Math.PI / 9;
         this.maxYTheta = 0;
         this.minYTheta = -0.99 * Math.PI / 2;
         this.orbitSensitivity = 0.005;
         this.currentDistance = initDistance;
         this.minDistance = 0.1 * initDistance;
-        
-        // Calculate original camera position for both modes
+
         var mat = mat4.identity();
         mat4.translate(mat, target, mat);
         mat4.rotateY(mat, this.currentXtheta, mat);
         mat4.rotateX(mat, this.currentYtheta, mat);
         mat4.translate(mat, [0, 0, initDistance], mat);
         var originalPosition = mat4.multiply(mat, [0, 0, 0, 1]);
-        
-        // Set camera position
+
         this.position = [originalPosition[0], originalPosition[1], originalPosition[2]];
-        
-        // Setup free camera orientation
+
         const dirToTarget = vec3.normalize(vec3.subtract(target, this.position));
         this.yaw = Math.atan2(dirToTarget[0], dirToTarget[2]);
-        this.pitch = Math.asin(-dirToTarget[1]) - Math.PI / 4;  // 45 degrees lower than original
-        
-        // Clamp pitch to prevent flipping
+        this.pitch = Math.asin(-dirToTarget[1]) - Math.PI / 4;
+
         this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch));
         this.updateVectors();
 
@@ -239,29 +220,23 @@ export class Camera {
     }
 
     updateVectors() {
-        // Calculate forward vector from yaw and pitch
         this.forward = [
             Math.cos(this.pitch) * Math.sin(this.yaw),
             Math.sin(this.pitch),
             Math.cos(this.pitch) * Math.cos(this.yaw)
         ]
-        
-        // Calculate right vector (cross product of world up and forward)
+
         this.right = vec3.normalize(vec3.cross([0, 1, 0], this.forward))
-        
-        // Calculate up vector (cross product of forward and right)
+
         this.up = vec3.normalize(vec3.cross(this.forward, this.right))
     }
 
     update(deltaTime) {
-        // Only update movement for coolcal mode
         if (this.mode !== 'coolcal') return;
-        
-        // Calculate movement speed based on whether fast mode is enabled
+
         const currentSpeed = this.keys.fast ? this.fastMoveSpeed : this.moveSpeed
         const moveDistance = currentSpeed * deltaTime
 
-        // Calculate movement direction based on pressed keys
         let moveDirection = [0, 0, 0]
 
         if (this.keys.forward) {
@@ -283,43 +258,47 @@ export class Camera {
             moveDirection = vec3.add(moveDirection, vec3.scale([0, 1, 0], -moveDistance))
         }
 
-        // Apply movement
         this.position = vec3.add(this.position, moveDirection)
-        
-        // Update view matrix if we moved
+
         if (vec3.length(moveDirection) > 0) {
             this.recalculateView()
         }
     }
 
+    consumeDirty() {
+        const wasDirty = this.dirty;
+        this.dirty = false;
+        return wasDirty;
+    }
+
     recalculateView() {
         let view;
-        
+
         if (this.mode === 'orbit') {
-            // Original orbit camera logic
             var mat = mat4.identity();
             mat4.translate(mat, this.target, mat);
             mat4.rotateY(mat, this.currentXtheta, mat);
             mat4.rotateX(mat, this.currentYtheta, mat);
             mat4.translate(mat, [0, 0, this.currentDistance], mat);
             var position = mat4.multiply(mat, [0, 0, 0, 1]);
+            this.position = [position[0], position[1], position[2]];
 
             view = mat4.lookAt(
-                [position[0], position[1], position[2]], // position
-                this.target, // target
-                [0, 1, 0], // up
+                [position[0], position[1], position[2]],
+                this.target,
+                [0, 1, 0],
             );
         } else {
-            // Free camera (coolcal) logic
             const target = vec3.add(this.position, this.forward);
             view = mat4.lookAt(
-                this.position, // camera position
-                target,        // look at target
-                this.up        // up vector
+                this.position,
+                target,
+                this.up
             );
         }
 
         renderUniformsViews.view_matrix.set(view);
         renderUniformsViews.inv_view_matrix.set(mat4.inverse(view));
+        this.dirty = true;
     }
 }

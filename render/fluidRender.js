@@ -2,31 +2,49 @@ export class FluidRenderer {
     constructor(
         device, canvas, presentationFormat,
         radius, fov, posvelBuffer, 
-        renderUniformBuffer,
-        visibilityBuffer
+        renderUniformBuffer
     ) {
         this.device = device
         this.canvas = canvas
         this.presentationFormat = presentationFormat
         this.posvelBuffer = posvelBuffer
         this.renderUniformBuffer = renderUniformBuffer
-        this.visibilityBuffer = visibilityBuffer
         this.wireframeEnabled = false
+        this.qualityMode = 'low'
+        this.clearColor = { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }
         this.cachedColorView = null
         this.lastTexture = null
     }
 
     async initialize() {
-        const sphere = await fetch('render/sphere.wgsl?v=20260309i').then(r => r.text());
-        const wireframe = await fetch('render/wireframe.wgsl?v=20260309i').then(r => r.text());
-        const wall = await fetch('render/wall.wgsl?v=20260309i').then(r => r.text());
+        const sphere = await fetch('render/sphere.wgsl?v=20260310k').then(r => r.text());
+        const wireframe = await fetch('render/wireframe.wgsl?v=20260310k').then(r => r.text());
+        const wall = await fetch('render/wall.wgsl?v=20260310k').then(r => r.text());
         const sphereModule = this.device.createShaderModule({ code: sphere })
         const wireframeModule = this.device.createShaderModule({ code: wireframe })
         const wallModule = this.device.createShaderModule({ code: wall })
 
+        const sphereBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    buffer: { type: 'read-only-storage' },
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    buffer: { type: 'uniform' },
+                },
+            ],
+        })
+        const spherePipelineLayout = this.device.createPipelineLayout({
+            bindGroupLayouts: [sphereBindGroupLayout],
+        })
+
         this.spherePipeline = this.device.createRenderPipeline({
             label: 'sphere pipeline', 
-            layout: 'auto', 
+            layout: spherePipelineLayout, 
             vertex: { module: sphereModule }, 
             fragment: {
                 module: sphereModule, 
@@ -42,7 +60,7 @@ export class FluidRenderer {
 
         this.wireframePipeline = this.device.createRenderPipeline({
             label: 'wireframe pipeline', 
-            layout: 'auto', 
+            layout: spherePipelineLayout, 
             vertex: { module: wireframeModule }, 
             fragment: {
                 module: wireframeModule, 
@@ -75,70 +93,28 @@ export class FluidRenderer {
             }
         })
 
-        this._createDepthTexture(this.canvas.width, this.canvas.height);
-
-        this.sphereBindGroup = this.device.createBindGroup({
-            label: 'sphere bind group', 
-            layout: this.spherePipeline.getBindGroupLayout(0),  
-            entries: [
-                { binding: 0, resource: { buffer: this.posvelBuffer }},
-                { binding: 1, resource: { buffer: this.renderUniformBuffer }},
-                { binding: 2, resource: { buffer: this.visibilityBuffer }},
-            ]
-        })
-
-        this.wireframeBindGroup = this.device.createBindGroup({
-            label: 'wireframe bind group', 
-            layout: this.wireframePipeline.getBindGroupLayout(0),  
-            entries: [
-                { binding: 0, resource: { buffer: this.posvelBuffer }},
-                { binding: 1, resource: { buffer: this.renderUniformBuffer }},
-                { binding: 2, resource: { buffer: this.visibilityBuffer }},
-            ]
-        })
-
-    }
-
-    setWireframeMode(enabled) {
-        this.wireframeEnabled = enabled;
-    }
-
-    resize(width, height) {
-        // Recreate depth texture with new size and drop cached color view
-        this._createDepthTexture(width, height);
-        this.cachedColorView = null;
-        this.lastTexture = null;
-    }
-
-    _createDepthTexture(width, height) {
         const depthTestTexture = this.device.createTexture({
-            size: [Math.max(1, width), Math.max(1, height), 1],
+            size: [this.canvas.width, this.canvas.height, 1],
             format: 'depth32float',
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
-        });
-        this.depthTestTextureView = depthTestTexture.createView();
-    }
+        })
+        this.depthTestTextureView = depthTestTexture.createView()
 
-    setVisibilityBuffer(buffer) {
-        this.visibilityBuffer = buffer;
-        // Recreate bind groups with new buffer
         this.sphereBindGroup = this.device.createBindGroup({
             label: 'sphere bind group', 
-            layout: this.spherePipeline.getBindGroupLayout(0),  
+            layout: sphereBindGroupLayout,  
             entries: [
                 { binding: 0, resource: { buffer: this.posvelBuffer }},
                 { binding: 1, resource: { buffer: this.renderUniformBuffer }},
-                { binding: 2, resource: { buffer: this.visibilityBuffer }},
             ]
         })
 
         this.wireframeBindGroup = this.device.createBindGroup({
             label: 'wireframe bind group', 
-            layout: this.wireframePipeline.getBindGroupLayout(0),  
+            layout: sphereBindGroupLayout,  
             entries: [
                 { binding: 0, resource: { buffer: this.posvelBuffer }},
                 { binding: 1, resource: { buffer: this.renderUniformBuffer }},
-                { binding: 2, resource: { buffer: this.visibilityBuffer }},
             ]
         })
 
@@ -149,6 +125,22 @@ export class FluidRenderer {
                 { binding: 0, resource: { buffer: this.renderUniformBuffer }},
             ]
         })
+
+    }
+
+    setWireframeMode(enabled) {
+        this.wireframeEnabled = enabled;
+    }
+
+    setQualityMode(mode) {
+        this.qualityMode = mode;
+        if (mode === 'low') {
+            this.wireframeEnabled = true;
+            this.clearColor = { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }
+        } else {
+            this.wireframeEnabled = false;
+            this.clearColor = { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }
+        }
     }
 
     execute(context, commandEncoder, numParticles) {
@@ -158,12 +150,12 @@ export class FluidRenderer {
             this.cachedColorView = currentTexture.createView();
             this.lastTexture = currentTexture;
         }
-        
+
         const renderPassDescriptor = {
             colorAttachments: [
                 {
                     view: this.cachedColorView,
-                    clearValue: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
+                    clearValue: this.clearColor,
                     loadOp: 'clear',
                     storeOp: 'store',
                 },
@@ -175,7 +167,7 @@ export class FluidRenderer {
                 depthStoreOp: 'store',
             },
         }
-        
+
         const renderPassEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
 
         renderPassEncoder.setBindGroup(0, this.wallBindGroup);
@@ -191,7 +183,7 @@ export class FluidRenderer {
             renderPassEncoder.setPipeline(this.spherePipeline);
             renderPassEncoder.draw(6, numParticles);
         }
-        
+
         renderPassEncoder.end();
     }
 }

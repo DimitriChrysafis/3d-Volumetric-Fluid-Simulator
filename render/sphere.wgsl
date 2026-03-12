@@ -1,49 +1,46 @@
 struct VertexOutput {
-    @builtin(position) position: vec4f, 
-    @location(0) uv: vec2f, 
-    @location(1) view_position: vec3f, 
-    @location(2) speed: f32, 
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+    @location(1) view_position: vec3f,
+    @location(2) speed: f32,
 }
 
 struct FragmentInput {
-    @location(0) uv: vec2f, 
-    @location(1) view_position: vec3f, 
-    @location(2) speed: f32, 
+    @location(0) uv: vec2f,
+    @location(1) view_position: vec3f,
+    @location(2) speed: f32,
 }
 
 struct FragmentOutput {
-    @location(0) frag_color: vec4f, 
-    @builtin(frag_depth) frag_depth: f32, 
+    @location(0) frag_color: vec4f,
+    @builtin(frag_depth) frag_depth: f32,
 }
 
 struct RenderUniforms {
-    texel_size: vec2f, 
-    sphere_size: f32, 
-    inv_projection_matrix: mat4x4f, 
-    projection_matrix: mat4x4f, 
-    view_matrix: mat4x4f, 
-    inv_view_matrix: mat4x4f, 
+    texel_size: vec2f,
+    sphere_size: f32,
+    inv_projection_matrix: mat4x4f,
+    projection_matrix: mat4x4f,
+    view_matrix: mat4x4f,
+    inv_view_matrix: mat4x4f,
     box_size: vec3f,
+    render_z_offset: f32,
+    box_anchor_z: f32,
 }
 
 struct PosVel {
-    position: vec3f, 
-    v: vec3f, 
+    position: vec3f,
+    v: vec3f,
 }
 
 @group(0) @binding(0) var<storage> particles: array<PosVel>;
 @group(0) @binding(1) var<uniform> uniforms: RenderUniforms;
-@group(0) @binding(2) var<storage, read> visibility: array<u32>;
 
 @vertex
-fn vs(    
-    @builtin(vertex_index) vertex_index: u32, 
+fn vs(
+    @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32
 ) -> VertexOutput {
-    // Early cull invisible instances (set position off-screen)
-    if (visibility[instance_index] == 0u) {
-        return VertexOutput(vec4f(-2.0, -2.0, 0.0, 1.0), vec2f(0.0), vec3f(0.0), 0.0);
-    }
     var corner_positions = array(
         vec2( 0.5,  0.5),
         vec2( 0.5, -0.5),
@@ -56,7 +53,7 @@ fn vs(
     let corner = vec3(corner_positions[vertex_index] * uniforms.sphere_size, 0.0);
     let uv = corner_positions[vertex_index] + 0.5;
 
-    let real_position = particles[instance_index].position;
+    let real_position = particles[instance_index].position + vec3f(0.0, 0.0, uniforms.render_z_offset);
     let view_position = (uniforms.view_matrix * vec4f(real_position, 1.0)).xyz;
 
     let out_position = uniforms.projection_matrix * vec4f(view_position + corner, 1.0);
@@ -67,19 +64,17 @@ fn vs(
 }
 
 fn value_to_color(value: f32) -> vec3<f32> {
-    // Ultra-creative cosmic nebula theme: deep space to stellar explosion
-    let col0 = vec3f(0.05, 0.0, 0.15);    // Deep space void (slowest)
-    let col1 = vec3f(0.4, 0.1, 0.6);      // Dark nebula purple
-    let col2 = vec3f(0.8, 0.2, 0.9);      // Bright magenta plasma
-    let col3 = vec3f(1.0, 0.4, 0.2);      // Hot stellar orange
-    let col4 = vec3f(1.0, 0.9, 0.1);      // Solar flare yellow
-    let col5 = vec3f(1.0, 0.0, 0.0);      // Bright red (fastest)
-    
-    // Add some dynamic color variation based on position for extra creativity
+    let col0 = vec3f(0.05, 0.0, 0.15);
+    let col1 = vec3f(0.4, 0.1, 0.6);
+    let col2 = vec3f(0.8, 0.2, 0.9);
+    let col3 = vec3f(1.0, 0.4, 0.2);
+    let col4 = vec3f(1.0, 0.9, 0.1);
+    let col5 = vec3f(1.0, 0.0, 0.0);
+
     let shimmer = sin(value * 20.0) * 0.1;
-    
+
     var base_color: vec3f;
-    
+
     if (0 <= value && value < 0.15) {
         let t = value / 0.15;
         base_color = mix(col0, col1, t);
@@ -96,13 +91,12 @@ fn value_to_color(value: f32) -> vec3<f32> {
         let t = (value - 0.8) / 0.2;
         base_color = mix(col4, col5, t);
     }
-    
-    // Add subtle shimmer effect for ultra-fast particles
+
     if (value > 0.7) {
         let intensity = (value - 0.7) / 0.3;
         base_color += vec3f(shimmer * intensity, shimmer * intensity * 0.5, shimmer * intensity * 0.2);
     }
-    
+
     return clamp(base_color, vec3f(0.0), vec3f(1.0));
 }
 
@@ -123,29 +117,24 @@ fn fs(input: FragmentInput) -> FragmentOutput {
     var clip_space_pos: vec4f = uniforms.projection_matrix * real_view_pos;
     out.frag_depth = clip_space_pos.z / clip_space_pos.w;
 
-    // Multiple light sources for better lighting
-    let light1_dir = normalize(vec3(1.0, 1.0, 1.0));     // Main light from top-right
-    let light2_dir = normalize(vec3(-0.5, 1.0, -0.5));   // Secondary light from left
-    let light3_dir = normalize(vec3(0.0, -1.0, 0.5));    // Fill light from below
-    
-    // Calculate diffuse lighting from multiple sources
+    let light1_dir = normalize(vec3(1.0, 1.0, 1.0));
+    let light2_dir = normalize(vec3(-0.5, 1.0, -0.5));
+    let light3_dir = normalize(vec3(0.0, -1.0, 0.5));
+
     let diffuse1 = max(0.0, dot(normal, light1_dir)) * 0.8;
     let diffuse2 = max(0.0, dot(normal, light2_dir)) * 0.4;
     let diffuse3 = max(0.0, dot(normal, light3_dir)) * 0.3;
-    
-    // Add ambient lighting
+
     let ambient = 0.4;
-    
-    // Combine all lighting
+
     let total_lighting = ambient + diffuse1 + diffuse2 + diffuse3;
-    
+
     var color: vec3f = value_to_color(input.speed / 1.5);
-    
-    // Apply enhanced lighting with some rim lighting for fast particles
+
     let rim_factor = pow(1.0 - abs(normalz), 2.0);
     let speed_factor = min(input.speed / 2.0, 1.0);
     let rim_lighting = rim_factor * speed_factor * 0.3;
-    
+
     out.frag_color = vec4(color * total_lighting + vec3(rim_lighting), 1.0);
     return out;
 }
