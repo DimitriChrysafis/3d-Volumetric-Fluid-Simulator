@@ -11,16 +11,23 @@ const BOX_DEPTH = 100;
 
 async function init() {
   const canvas = document.querySelector('canvas');
+  const userAgent = navigator.userAgent.toLowerCase();
+  const isZen = userAgent.includes('zen');
+  const isFirefoxFamily = userAgent.includes('firefox') || isZen;
 
   if (!navigator.gpu) {
-    alert("WebGPU is not supported on your browser.");
-    throw new Error();
+    if (isZen) {
+      throw new Error('Zen Browser does not expose WebGPU for this demo. Use Brave/Chrome, or a Firefox build with WebGPU support enabled.');
+    }
+    if (isFirefoxFamily) {
+      throw new Error('This Firefox-based browser is not exposing WebGPU here. Try Brave/Chrome, or a compatible Firefox build with WebGPU enabled.');
+    }
+    throw new Error('WebGPU is not supported on your browser.');
   }
 
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) {
-    alert("Adapter is not available.");
-    throw new Error();
+    throw new Error('WebGPU adapter is not available in this browser session.');
   }
 
   const device = await adapter.requestDevice({
@@ -135,10 +142,7 @@ async function main() {
     // let boxDepth = 100; // unused
     
     let wireframeEnabled = true;
-    let boundingBoxEnabled = true;
-    
-    renderer.setBoundingBoxMode(boundingBoxEnabled);
-    
+
     renderer.setWireframeMode(wireframeEnabled);
     
     const gui = new dat.GUI();
@@ -188,12 +192,6 @@ async function main() {
       }
     });
 
-    renderingFolder.add({ boundingBoxEnabled: boundingBoxEnabled }, 'boundingBoxEnabled').name('Show Bounding Box').onChange((value) => {
-      boundingBoxEnabled = value;
-      if (renderer && renderer.setBoundingBoxMode) {
-        renderer.setBoundingBoxMode(boundingBoxEnabled);
-      }
-    });
     const renderState = { resolutionScale: 1.0, cullingEnabled: true };
     renderingFolder.add(renderState, 'resolutionScale', 0.5, 2.0, 0.1).name('Resolution Scale').onChange((s) => {
       const w = Math.max(1, Math.floor(devicePixelRatio * canvas.clientWidth * s));
@@ -245,7 +243,7 @@ async function main() {
     let realBoxSize = [...initBoxSize];
     simulator.reset(currentParticleCount, initBoxSize);
     
-    camera.reset(canvasElement, 150, [BOX_WIDTH / 2, BOX_HEIGHT / 4, BOX_DEPTH / 2], fov, zoomRate);
+    camera.reset(canvasElement, 145, [BOX_WIDTH / 2, 18, 68], fov, zoomRate);
 
     let boxWidthRatio = 1.0;
     let prevBoxSize = [...realBoxSize];

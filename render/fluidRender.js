@@ -12,18 +12,17 @@ export class FluidRenderer {
         this.renderUniformBuffer = renderUniformBuffer
         this.visibilityBuffer = visibilityBuffer
         this.wireframeEnabled = false
-        this.boundingBoxEnabled = true
         this.cachedColorView = null
         this.lastTexture = null
     }
 
     async initialize() {
-        const sphere = await fetch('render/sphere.wgsl').then(r => r.text());
-        const wireframe = await fetch('render/wireframe.wgsl').then(r => r.text());
-        const boundingBox = await fetch('render/boundingBox.wgsl').then(r => r.text());
+        const sphere = await fetch('render/sphere.wgsl?v=20260309i').then(r => r.text());
+        const wireframe = await fetch('render/wireframe.wgsl?v=20260309i').then(r => r.text());
+        const wall = await fetch('render/wall.wgsl?v=20260309i').then(r => r.text());
         const sphereModule = this.device.createShaderModule({ code: sphere })
         const wireframeModule = this.device.createShaderModule({ code: wireframe })
-        const boundingBoxModule = this.device.createShaderModule({ code: boundingBox })
+        const wallModule = this.device.createShaderModule({ code: wall })
 
         this.spherePipeline = this.device.createRenderPipeline({
             label: 'sphere pipeline', 
@@ -60,35 +59,18 @@ export class FluidRenderer {
             }
         })
 
-        this.boundingBoxPipeline = this.device.createRenderPipeline({
-            label: 'bounding box pipeline', 
-            layout: 'auto', 
-            vertex: { module: boundingBoxModule }, 
+        this.wallPipeline = this.device.createRenderPipeline({
+            label: 'wall pipeline',
+            layout: 'auto',
+            vertex: { module: wallModule },
             fragment: {
-                module: boundingBoxModule, 
-                targets: [{
-                    format: this.presentationFormat,
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                    },
-                }]
-            }, 
-            primitive: { 
-                topology: 'triangle-list',
-                stripIndexFormat: undefined
+                module: wallModule,
+                targets: [{ format: this.presentationFormat }]
             },
+            primitive: { topology: 'triangle-list', cullMode: 'none' },
             depthStencil: {
                 depthWriteEnabled: true,
-                depthCompare: 'less-equal',
+                depthCompare: 'less',
                 format: 'depth32float'
             }
         })
@@ -115,21 +97,10 @@ export class FluidRenderer {
             ]
         })
 
-        this.boundingBoxBindGroup = this.device.createBindGroup({
-            label: 'bounding box bind group', 
-            layout: this.boundingBoxPipeline.getBindGroupLayout(0),  
-            entries: [
-                { binding: 0, resource: { buffer: this.renderUniformBuffer }},
-            ]
-        })
     }
 
     setWireframeMode(enabled) {
         this.wireframeEnabled = enabled;
-    }
-
-    setBoundingBoxMode(enabled) {
-        this.boundingBoxEnabled = enabled;
     }
 
     resize(width, height) {
@@ -170,6 +141,14 @@ export class FluidRenderer {
                 { binding: 2, resource: { buffer: this.visibilityBuffer }},
             ]
         })
+
+        this.wallBindGroup = this.device.createBindGroup({
+            label: 'wall bind group',
+            layout: this.wallPipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: { buffer: this.renderUniformBuffer }},
+            ]
+        })
     }
 
     execute(context, commandEncoder, numParticles) {
@@ -196,15 +175,13 @@ export class FluidRenderer {
                 depthStoreOp: 'store',
             },
         }
-
+        
         const renderPassEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-        
-        if (this.boundingBoxEnabled) {
-            renderPassEncoder.setBindGroup(0, this.boundingBoxBindGroup);
-            renderPassEncoder.setPipeline(this.boundingBoxPipeline);
-            renderPassEncoder.draw(54);
-        }
-        
+
+        renderPassEncoder.setBindGroup(0, this.wallBindGroup);
+        renderPassEncoder.setPipeline(this.wallPipeline);
+        renderPassEncoder.draw(31 * 36);
+
         if (this.wireframeEnabled) {
             renderPassEncoder.setBindGroup(0, this.wireframeBindGroup);
             renderPassEncoder.setPipeline(this.wireframePipeline);

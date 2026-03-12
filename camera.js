@@ -203,8 +203,8 @@ export class Camera {
         this.zoomRate = zoomRate;
         
         // Setup orbit camera properties
-        this.currentXtheta = Math.PI / 2;
-        this.currentYtheta = -Math.PI / 12;
+        this.currentXtheta = 0.55;
+        this.currentYtheta = -Math.PI / 14;
         this.maxYTheta = 0;
         this.minYTheta = -0.99 * Math.PI / 2;
         this.orbitSensitivity = 0.005;
