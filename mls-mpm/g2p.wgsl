@@ -17,6 +17,11 @@ struct PistonState {
     pad1: f32,
 }
 
+struct PosVel {
+    position: vec3f,
+    speed: f32,
+}
+
 override fixed_point_multiplier: f32; 
 override dt: f32; 
 
@@ -25,6 +30,8 @@ override dt: f32;
 @group(0) @binding(2) var<uniform> real_box_size: vec3f;
 @group(0) @binding(3) var<uniform> init_box_size: vec3f;
 @group(0) @binding(4) var<uniform> piston_state: PistonState;
+@group(0) @binding(5) var<storage, read_write> posvel: array<PosVel>;
+@group(0) @binding(6) var<uniform> num_particles: f32;
 
 fn decodeFixedPoint(fixed_point: i32) -> f32 {
 	return f32(fixed_point) / fixed_point_multiplier;
@@ -33,7 +40,7 @@ fn decodeFixedPoint(fixed_point: i32) -> f32 {
 
 @compute @workgroup_size(64)
 fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x < arrayLength(&particles)) {
+    if (f32(id.x) < num_particles) {
         particles[id.x].v = vec3f(0.);
         var weights: array<vec3f, 3>;
 
@@ -59,11 +66,12 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                         i32(cell_x.x) * i32(init_box_size.y) * i32(init_box_size.z) + 
                         i32(cell_x.y) * i32(init_box_size.z) + 
                         i32(cell_x.z);
+                    let cell_live: f32 = select(0.0, 1.0, cell_x.z < real_box_size.z);
                     let weighted_velocity: vec3f = vec3f(
                         decodeFixedPoint(cells[cell_index].vx), 
                         decodeFixedPoint(cells[cell_index].vy), 
                         decodeFixedPoint(cells[cell_index].vz)
-                    ) * weight;
+                    ) * weight * cell_live;
                     let term: mat3x3f = mat3x3f(
                         weighted_velocity * cell_dist.x, 
                         weighted_velocity * cell_dist.y, 
@@ -101,5 +109,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             particles[id.x].v.z += wall_stiffness * (wall_max.z - x_n.z);
         }
+
+        particles[id.x].v = clamp(particles[id.x].v, vec3f(-8.0), vec3f(8.0));
+        posvel[id.x].position = particles[id.x].position;
+        posvel[id.x].speed = length(particles[id.x].v);
     }
 }

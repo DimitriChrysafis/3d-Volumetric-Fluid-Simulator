@@ -26,10 +26,12 @@ fn decodeFixedPoint(fixed_point: i32) -> f32 {
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
 @group(0) @binding(1) var<storage, read_write> cells: array<Cell>;
 @group(0) @binding(2) var<uniform> init_box_size: vec3f;
+@group(0) @binding(3) var<uniform> num_particles: f32;
+@group(0) @binding(4) var<uniform> real_box_size: vec3f;
 
 @compute @workgroup_size(64)
 fn p2g_2(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x < arrayLength(&particles)) {
+    if (f32(id.x) < num_particles) {
         var weights: array<vec3f, 3>;
 
         let particle = particles[id.x];
@@ -53,14 +55,14 @@ fn p2g_2(@builtin(global_invocation_id) id: vec3<u32>) {
                         i32(cell_x.x) * i32(init_box_size.y) * i32(init_box_size.z) + 
                         i32(cell_x.y) * i32(init_box_size.z) + 
                         i32(cell_x.z);
-                    density += decodeFixedPoint(cells[cell_index].mass) * weight;
+                    density += decodeFixedPoint(cells[cell_index].mass) * weight * select(0.0, 1.0, cell_x.z < real_box_size.z);
                 }
             }
         }
 
-        let volume: f32 = 1.0 / density;
+        let volume: f32 = 1.0 / max(density, 0.05);
 
-        let pressure: f32 = max(-0.0, stiffness * (pow(density / rest_density, 5.) - 1));
+        let pressure: f32 = min(max(0.0, stiffness * (pow(density / rest_density, 5.) - 1)), 60.0);
 
         var stress: mat3x3f = mat3x3f(-pressure, 0, 0, 0, -pressure, 0, 0, 0, -pressure);
         let dudv: mat3x3f = particle.C;
