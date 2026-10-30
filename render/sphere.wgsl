@@ -2,13 +2,15 @@ struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) uv: vec2f,
     @location(1) view_position: vec3f,
-    @location(2) speed: f32,
+    @location(2) @interpolate(flat) color: vec3f,
+    @location(3) @interpolate(flat) speed_factor: f32,
 }
 
 struct FragmentInput {
     @location(0) uv: vec2f,
     @location(1) view_position: vec3f,
-    @location(2) speed: f32,
+    @location(2) @interpolate(flat) color: vec3f,
+    @location(3) @interpolate(flat) speed_factor: f32,
 }
 
 struct FragmentOutput {
@@ -30,7 +32,7 @@ struct RenderUniforms {
 
 struct PosVel {
     position: vec3f,
-    v: vec3f,
+    speed: f32,
 }
 
 @group(0) @binding(0) var<storage> particles: array<PosVel>;
@@ -53,14 +55,17 @@ fn vs(
     let corner = vec3(corner_positions[vertex_index] * uniforms.sphere_size, 0.0);
     let uv = corner_positions[vertex_index] + 0.5;
 
-    let real_position = particles[instance_index].position + vec3f(0.0, 0.0, uniforms.render_z_offset);
+    let particle = particles[instance_index];
+    let real_position = particle.position + vec3f(0.0, 0.0, uniforms.render_z_offset);
     let view_position = (uniforms.view_matrix * vec4f(real_position, 1.0)).xyz;
 
     let out_position = uniforms.projection_matrix * vec4f(view_position + corner, 1.0);
 
-    let speed = sqrt(dot(particles[instance_index].v, particles[instance_index].v));
+    let speed = particle.speed;
+    let color = value_to_color(speed / 1.5);
+    let speed_factor = min(speed / 2.0, 1.0);
 
-    return VertexOutput(out_position, uv, view_position, speed);
+    return VertexOutput(out_position, uv, view_position, color, speed_factor);
 }
 
 fn value_to_color(value: f32) -> vec3<f32> {
@@ -129,11 +134,10 @@ fn fs(input: FragmentInput) -> FragmentOutput {
 
     let total_lighting = ambient + diffuse1 + diffuse2 + diffuse3;
 
-    var color: vec3f = value_to_color(input.speed / 1.5);
+    var color: vec3f = input.color;
 
     let rim_factor = pow(1.0 - abs(normalz), 2.0);
-    let speed_factor = min(input.speed / 2.0, 1.0);
-    let rim_lighting = rim_factor * speed_factor * 0.3;
+    let rim_lighting = rim_factor * input.speed_factor * 0.3;
 
     out.frag_color = vec4(color * total_lighting + vec3(rim_lighting), 1.0);
     return out;

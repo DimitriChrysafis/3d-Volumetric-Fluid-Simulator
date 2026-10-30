@@ -16,7 +16,7 @@ export class FluidRenderer {
     }
 
     async initialize() {
-        const sphere = await fetch('render/sphere.wgsl?v=20260716a').then(r => r.text());
+        const sphere = await fetch('render/sphere.wgsl?v=20261030a').then(r => r.text());
         const wall = await fetch('render/wall.wgsl?v=20260310k').then(r => r.text());
         const sphereModule = this.device.createShaderModule({ code: sphere })
         const wallModule = this.device.createShaderModule({ code: wall })

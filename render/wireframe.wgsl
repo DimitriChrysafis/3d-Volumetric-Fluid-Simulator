@@ -29,7 +29,7 @@ struct RenderUniforms {
 
 struct PosVel {
     position: vec3f,
-    v: vec3f,
+    speed: f32,
 }
 
 @group(0) @binding(0) var<storage> particles: array<PosVel>;
@@ -63,7 +63,7 @@ fn vs(
 
     let out_position = uniforms.projection_matrix * vec4f(view_position + vec3f(corner, 0.0), 1.0);
 
-    let speed = sqrt(dot(particles[instance_index].v, particles[instance_index].v));
+    let speed = particles[instance_index].speed;
 
     return VertexOutput(out_position, uv, view_position, speed);
 }
