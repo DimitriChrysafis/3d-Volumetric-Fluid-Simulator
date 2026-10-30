@@ -1,6 +1,6 @@
 import { Camera } from './camera.js?v=20260310p'
-import { MLSMPMSimulator, mlsmpmParticleStructSize } from './mls-mpm/mls-mpm.js?v=20260310p'
-import { FluidRenderer } from './render/fluidRender.js?v=20260716a'
+import { MLSMPMSimulator, mlsmpmParticleStructSize } from './mls-mpm/mls-mpm.js?v=20261030a'
+import { FluidRenderer } from './render/fluidRender.js?v=20261030a'
 import { renderUniformsValues, renderUniformsViews, numParticlesMax } from './common.js?v=20260310p'
 
 const BOX_WIDTH = 100;
@@ -51,7 +51,7 @@ async function init() {
     throw new Error();
   }
 
-  const devicePixelRatio = 3.0;
+  const devicePixelRatio = Math.min(window.devicePixelRatio || 1.0, 2.0);
   canvas.width = devicePixelRatio * canvas.clientWidth;
   canvas.height = devicePixelRatio * canvas.clientHeight;
 
@@ -93,7 +93,7 @@ async function main() {
 
     const posvelBuffer = device.createBuffer({
       label: 'position buffer',
-      size: 32 * numParticlesMax,
+      size: 16 * numParticlesMax,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -210,7 +210,7 @@ async function main() {
       const centerX = BOX_WIDTH / 2;
       const centerY = BOX_HEIGHT / 2;
       const centerZ = Math.max(10, realBoxSize[2] - 18);
-      const sphereRadius = 5;
+      const sphereRadius = 13;
       const numSphereParticles = 10000;
 
       simulator.addSphere(centerX, centerY, centerZ, sphereRadius, numSphereParticles);
@@ -328,7 +328,7 @@ async function main() {
         }
 
         if (Math.abs(realBoxSize[2] - previousDepth) > 1e-3) {
-          pistonVelocity = (realBoxSize[2] - previousDepth) / Math.max(deltaTime, 1e-6);
+          pistonVelocity = (realBoxSize[2] - previousDepth) / 0.4;
         }
         uniformsNeedUpdate = true;
       }
